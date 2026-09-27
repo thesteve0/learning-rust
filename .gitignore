@@ -1,0 +1,6 @@
+.idea/
+books/
+books/*
+
+# Rust build artifacts in any Cargo project or workspace member.
+target/
