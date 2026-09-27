@@ -1,10 +1,97 @@
-# Milestone 2, Lesson 1: Ownership, Borrowing, and the JSON Round Trip
+# Milestone 2, Lesson 2: Ownership, Borrowing, and the JSON Round Trip
 
 ## Purpose
 
 This lesson completes the program promised by **Next lesson** at the end of Milestone 1: an async `main` defines a serializable struct, serializes it to JSON, deserializes it again, and prints both forms. It also uses that small program to introduce the ownership rules that make Rust different from Java.
 
 By the end, you should be able to explain why assigning a `String` moves it, choose between `String` and `&str` in a function signature, and read the three most common borrow-checker diagnostics without treating them as mysterious compiler failures.
+
+---
+
+## Instructor notes: goals and lesson-design rationale
+
+Keep this section with the lesson. It records **why this lesson is shaped this way**, so later questions can be answered consistently rather than treating each Rust rule as an isolated fact.
+
+### Overall course goal
+
+This repository is preparation for teaching people who primarily know Python (and for an instructor coming from Java) to build a native Rust CLI with the Goose Development Kit. The goal is **just enough Rust to read, explain, and safely adapt the course code**—not a comprehensive systems-programming curriculum.
+
+The eventual application must construct provider requests, represent native messages, serialize data as JSON, run asynchronous inference, maintain conversation history, and expose CLI/configuration behavior. Students will repeatedly encounter owned values, borrowed values, `String`/`&str`, `Result`, async code, traits, and macros while doing that work. Ownership is placed early because it is the model that makes the later compiler messages and API signatures intelligible.
+
+### What this lesson deliberately connects
+
+This is both the second course lesson and the first focused ownership milestone. It joins two otherwise separate needs in one small, runnable program:
+
+1. **Complete the contract from Lesson 1.** The prior lesson ended by promising an async JSON round trip using Serde, `serde_json`, Tokio, Cargo, and IDEA. Starting from that program makes Lesson 1's dependency and Cargo discussion concrete instead of leaving it as setup with no payoff.
+2. **Use a believable agent-domain value.** `AgentMessage { role, content }` resembles provider/message data students will handle later. It is intentionally small: its two owned `String` fields make moving, borrowing, cloning, serializing, deserializing, and dropping visible without provider SDK complexity.
+3. **Introduce ownership through observable behavior.** The program moves `original` to `owner`, creates a deliberately independent `text` with `.clone()`, borrows values for read and mutation, and prints from `Drop`. Each abstract rule therefore has a line of code and runtime or compiler evidence attached to it.
+4. **Keep error handling intentionally shallow.** `?` appears only because the real JSON APIs are fallible. This lesson gives its plain-English meaning, but defers error types, `Result`, `Option`, `match`, `anyhow`, and `thiserror` to Milestone 3. Do not let an ownership lesson become an error-handling lesson.
+
+### Pedagogical sequence
+
+The ordering is intentional:
+
+| Order | Concept | Why it comes here |
+|---|---|---|
+| 1 | Run the JSON round trip | Gives students a working, relevant baseline and fulfills the prior lesson's stated next step. |
+| 2 | Move versus `Copy` | Explains why `let b = a` behaves differently for `String` and `i32`; this is the essential Java/Python mental-model break. |
+| 3 | Borrow (`&T`) and mutably borrow (`&mut T`) | Gives the normal alternative to copying or transferring ownership and explains the function signatures students see everywhere. |
+| 4 | Practice three compiler errors | Converts borrow-checker diagnostics into expected feedback, not a reason to panic or blindly clone. |
+| 5 | `String` versus `&str` and a light lifetime introduction | Lets students choose practical string APIs while postponing advanced annotation detail. |
+| 6 | `Drop`, then recognition-only `Box`/`Rc` | Connects ownership to deterministic cleanup and prepares students to recognize later type signatures without overloading the first lesson. |
+
+### Deliberate scope boundaries
+
+Teach and practice these now:
+
+- A non-`Copy` value has one owner; assignment, argument passing, and return can move it.
+- `&T` permits shared reading; `&mut T` permits exclusive mutation; the compiler enforces either-many-readers-or-one-writer.
+- A function should normally borrow when it only needs temporary access, take ownership when it must retain/transform the value, and clone only when a genuinely independent owned value is required.
+- `String` owns text; `&str` views text without owning it; returning a freshly constructed value should normally return `String`.
+- Scope exit and `drop(value)` perform deterministic cleanup.
+
+Do **not** attempt to teach these in depth here:
+
+- lifetime-elision rules, complex multi-reference lifetime design, self-referential types, or `'static` beyond recognizing a string literal;
+- interior mutability (`RefCell`, `Cell`, mutexes), `Arc`, thread-safety traits (`Send`/`Sync`), or concurrent ownership;
+- smart-pointer implementation details, reference-count cycles, or manual memory management;
+- the provider SDK's full message types or network calls;
+- robust error architecture. Those are later milestones.
+
+The simplification is deliberate. A student should first be able to predict whether code moves, borrows, mutates, or drops a value. Only then should later lessons add async/concurrency, traits, dynamic dispatch, and richer provider types.
+
+### Choices in the example code
+
+- `AgentMessage` uses owned `String` fields rather than borrowed `&str` fields. Real message objects commonly need to survive beyond the call that created their text; owned fields avoid introducing struct lifetime parameters before students need them.
+- `serde_json::to_string(&owner)` borrows the message so it remains usable; `from_str(&json)` borrows JSON input but creates a fresh owned message. This contrast demonstrates that an API's signature—not a blanket rule about serialization—determines whether ownership moves.
+- `let mut text = owner.content.clone()` is intentionally explicit. It demonstrates a valid reason to duplicate data: the mutable text must diverge from the message's original content. It is not an endorsement of cloning to silence every borrow-checker error.
+- `describe(&str)` models the preferred read-only text API. The exercise specification also calls for observing `&String`; discuss it as a more restrictive borrowed parameter that works for a `String` but rejects a literal or arbitrary string slice. Prefer `&str` unless the API specifically requires `String` methods or ownership layout.
+- `append_period(&mut String)` is intentionally more specific because it calls `push`; it demonstrates mutation of an owned growable string. Later, introduce generic alternatives only when they solve a real problem.
+- The `Drop` implementation only prints. Real `Drop` implementations release resources such as file handles, sockets, locks, and transactions; printing is solely a safe way to observe timing.
+- `#[tokio::main]` is retained to fulfill Lesson 1 and match the async shape of the future GDK CLI. There is no `.await` yet, so Tokio is not the subject of this lesson; async runtime behavior belongs to Milestone 4.
+
+### Anticipated questions and concise teaching answers
+
+| Likely question | Answer to anchor the discussion |
+|---|---|
+| “Is a move copying the object?” | No. For a non-`Copy` value, it transfers the one ownership responsibility. Rust then rejects use through the old binding so the allocation is freed exactly once. |
+| “Why not automatically copy like Java references?” | Java copies a reference while the garbage collector retains ownership of the object. Rust has no tracing GC here, so it makes ownership and sharing explicit and verifies safety at compile time. |
+| “Why doesn't Rust just clone automatically?” | Cloning can allocate and be expensive, and it can change program semantics. Rust requires the programmer to make that independent copy visible with `.clone()`. |
+| “Why can Serde borrow when `AgentMessage` owns its strings?” | The serializer only reads the message during the call, so its API accepts a borrow. The deserializer creates a new value and returns ownership of it. |
+| “Does `&mut` mean the object is permanently mutable?” | No. It is a temporary, exclusive permission. The binding must be mutable to create it, and the borrow ends after its last use. |
+| “Why does `&str` accept a `String`?” | A `String` can be borrowed as a string slice through deref coercion. `&str` is therefore a flexible read-only input type for both literals and owned strings. |
+| “Should I return `&str` to avoid allocating?” | Only if the returned text already lives inside an input or another value that will outlive the call. Freshly formatted text must be returned as an owned `String`. |
+| “Does `drop` replace garbage collection?” | `drop` is deterministic cleanup of an owned value. Rust values are ordinarily cleaned up automatically at scope exit; explicit `drop` is only needed to release something earlier. |
+| “Why are Box and Rc not used in the program?” | They solve special data-shape or shared-ownership needs. Ordinary ownership and borrowing are simpler and should be the default. |
+
+### Success criterion before moving on
+
+Do not judge success by memorizing terminology or by being able to recite lifetime syntax. A learner is ready for Milestone 3 when they can look at an unfamiliar function call and explain:
+
+1. which value owns each piece of data before and after the call;
+2. whether an argument is moved, immutably borrowed, or mutably borrowed;
+3. whether a clone is necessary or merely avoiding thought; and
+4. why the compiler accepts or rejects the overlapping accesses.
 
 ---
 
